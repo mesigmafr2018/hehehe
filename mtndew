@@ -1,5 +1,3 @@
---hi :)
-
 local realsethiddenproperty = sethiddenproperty
 sethiddenproperty = newcclosure(function(obj, prop, val)
     if prop == "PhysicsRepRootPart" then
@@ -7270,7 +7268,7 @@ end
 local function unanchoredOwnedCached(part)
 	if part and _ownVerdictAt[part] then
 		local age = tick() - _ownVerdictAt[part]
-		if age >= 0 and age < 0.08 then
+		if age >= 0 and age < 0.03 then
 			return _ownVerdict[part]
 		end
 	end
@@ -7574,56 +7572,100 @@ local function unanchoredParkRealRootLimbStyle()
 	unanchoredParkRealRootBelowRig()
 end
 
+-- Rotate focus part every 0.1s so one stuck can does not block the rest
+local _unanchoredClaimFocusAt = 0
+local _unanchoredClaimFocusPart = nil
+
 local function unanchoredClaimAllParts(partsList)
 	local realRoot = unanchoredGetRealRoot()
 	if not realRoot then return end
-	-- keep real char non-collidable while claiming
 	unanchoredDisableRealCollisions()
 	if type(partsList) ~= "table" or #partsList == 0 then
 		unanchoredClearPhysicsRep(realRoot)
+		_unanchoredClaimFocusPart = nil
 		if UnanchoredReanimator.RootBelowRig then
 			unanchoredParkRealRootBelowRig(realRoot)
 		end
 		return
 	end
 
-	_unanchoredClaimIndex = (_unanchoredClaimIndex % #partsList) + 1
-	local primary = partsList[_unanchoredClaimIndex]
+	local now = tick()
+	-- Build list of unowned first, then owned
+	local unowned, owned = {}, {}
+	for _, p in ipairs(partsList) do
+		if p and p.Parent and not p.Anchored then
+			if unanchoredOwnedCached(p) then
+				table.insert(owned, p)
+			else
+				table.insert(unowned, p)
+			end
+		end
+	end
+	local ordered = {}
+	for _, p in ipairs(unowned) do table.insert(ordered, p) end
+	for _, p in ipairs(owned) do table.insert(ordered, p) end
+	if #ordered == 0 then return end
+
+	-- Advance focus every 0.1s (or if focus left the list)
+	local focusStillValid = false
+	if _unanchoredClaimFocusPart then
+		for _, p in ipairs(ordered) do
+			if p == _unanchoredClaimFocusPart then
+				focusStillValid = true
+				break
+			end
+		end
+	end
+	if (not focusStillValid) or (now - _unanchoredClaimFocusAt) >= 0.1 then
+		_unanchoredClaimFocusAt = now
+		local pool = (#unowned > 0) and unowned or ordered
+		local idx = 1
+		if _unanchoredClaimFocusPart then
+			for i, p in ipairs(pool) do
+				if p == _unanchoredClaimFocusPart then
+					idx = (i % #pool) + 1
+					break
+				end
+			end
+		end
+		_unanchoredClaimFocusPart = pool[idx]
+	end
+
+	local primary = _unanchoredClaimFocusPart or ordered[1]
 	if not (primary and primary.Parent) then return end
 
-	-- 1) PhysicsRepRootRef = InstanceHandle.new(TargetPart) on REAL HRP
-	unanchoredClaimPhysicsRep(realRoot, primary)
-
-	-- 2) HRP placement: either ride the part OR stay under the reanim rig (Limb-style)
-	if UnanchoredReanimator.RootBelowRig then
-		unanchoredParkRealRootBelowRig(realRoot)
-	else
+	local function claimOn(part)
+		if not (part and part.Parent and not part.Anchored) then return end
+		unanchoredClaimPhysicsRep(realRoot, part)
 		pcall(function()
-			realRoot.CFrame = primary.CFrame
+			realRoot.CFrame = part.CFrame
 			realRoot.AssemblyLinearVelocity = Vector3.zero
 			realRoot.AssemblyAngularVelocity = Vector3.zero
 		end)
+		unanchoredWake(part)
+		unanchoredVelocityReclaim(part)
+		pcall(function()
+			if part.RootPriority ~= 127 then part.RootPriority = 127 end
+		end)
+		_ownVerdictAt[part] = nil
 	end
 
-	-- 3) Wake part (NetworkIsSleeping + priority)
-	unanchoredWake(primary)
-	pcall(function()
-		if primary.RootPriority ~= 127 then primary.RootPriority = 127 end
-	end)
-
-	-- Brief pulse claim on other parts same frame so none starve entirely
-	for i, part in ipairs(partsList) do
-		if part and part.Parent and i ~= _unanchoredClaimIndex then
-			unanchoredClaimPhysicsRep(realRoot, part)
+	-- Focus one part at a time (0.1s), light wake on others
+	claimOn(primary)
+	for _, part in ipairs(ordered) do
+		if part ~= primary and part.Parent then
 			unanchoredWake(part)
+			pcall(function()
+				if part.RootPriority ~= 127 then part.RootPriority = 127 end
+			end)
 		end
 	end
-	-- End on primary again
-	unanchoredClaimPhysicsRep(realRoot, primary)
 
-	-- Keep under-rig position after claim pulses (claim may have moved CF)
 	if UnanchoredReanimator.RootBelowRig then
-		unanchoredParkRealRootBelowRig(realRoot)
+		local anyLost = #unowned > 0
+		if not anyLost then
+			unanchoredParkRealRootBelowRig(realRoot)
+		end
 	end
 end
 
@@ -8798,7 +8840,7 @@ local function unanchoredProcessFling(ownedParts)
 end
 
 function UnanchoredReanimator.Config(parent)
-	UI.CreateText(parent, "EEEEEEEE", 11, Enum.TextXAlignment.Center)
+	UI.CreateText(parent, "Unanchored — simple body parts on the reanim rig.\nNo weapons. Same flow as Mountain Dew.", 11, Enum.TextXAlignment.Center)
 
 	local doff = UI.CreateSlider(parent, "Offset Y", UnanchoredReanimator.OffsetY, -10, 10, 0.5)
 	doff.Changed:Connect(function(val)
@@ -8818,7 +8860,7 @@ function UnanchoredReanimator.Config(parent)
 		UnanchoredReanimator.PartSize = val
 		SaveData.Reanimator.UnanchoredPartSize = val
 	end)
-	UI.CreateText(parent, "0  for any size :)", 10, Enum.TextXAlignment.Center)
+	UI.CreateText(parent, "0 = any size. 1 = only 1×1×1 cubes, etc.", 10, Enum.TextXAlignment.Center)
 
 	UI.CreateSwitch(parent, "Hide Under", UnanchoredReanimator.RootBelowRig).Changed:Connect(function(val)
 		UnanchoredReanimator.RootBelowRig = val
@@ -8830,7 +8872,7 @@ function UnanchoredReanimator.Config(parent)
 		UnanchoredReanimator.RootBelowOffset = val
 		SaveData.Reanimator.UnanchoredRootBelowOffset = val
 	end)
-	UI.CreateText(parent, "how far below you is.", 10, Enum.TextXAlignment.Center)
+	UI.CreateText(parent, "Studs under reanim HRP for the real root.", 10, Enum.TextXAlignment.Center)
 
 	UI.CreateSwitch(parent, "Stay Invisible (only works in some games)", UnanchoredReanimator.StayInvisible).Changed:Connect(function(val)
 		UnanchoredReanimator.StayInvisible = val
@@ -9043,37 +9085,41 @@ function UnanchoredReanimator.Start()
 		end
 
 		local now = tick()
-		if now - lastScan > SCAN_INTERVAL or #UnanchoredReanimator.Parts == 0 then
-			lastScan = now
-			local exclude = { Player.Character, RC }
-			local partSize = UnanchoredReanimator.PartSize or 1
-			local found
-			if UnanchoredReanimator.CanMode then
-				-- Folder only (AllMountainDew) + can size
-				found = unanchoredCollectCansFromSource(maxParts, {})
-			else
-				found = collectUnanchoredParts(center, range, maxParts, exclude, partSize)
-			end
-			local newList = {}
-			local used = {}
-			-- Keep already-held parts regardless of claim range
-			for _, old in ipairs(UnanchoredReanimator.Parts) do
-				if old and old.Parent and not old.Anchored and not used[old] then
-					if unanchoredPartMatchesSize(old, partSize) then
-						table.insert(newList, old)
-						used[old] = true
-						if #newList >= maxParts then break end
+		local missingSlots = #UnanchoredReanimator.Parts < maxParts
+		-- Rescan when empty, underfilled, or on normal interval
+		if missingSlots or #UnanchoredReanimator.Parts == 0 or (now - lastScan > SCAN_INTERVAL) then
+			-- faster while missing limbs so we claim replacements quickly
+			local interval = missingSlots and 0.12 or SCAN_INTERVAL
+			if missingSlots or #UnanchoredReanimator.Parts == 0 or (now - lastScan > interval) then
+				lastScan = now
+				local exclude = { Player.Character, RC }
+				local partSize = UnanchoredReanimator.PartSize or 1
+				local used = {}
+				local newList = {}
+				for _, oldp in ipairs(UnanchoredReanimator.Parts) do
+					if oldp and oldp.Parent and not oldp.Anchored and not used[oldp] then
+						if unanchoredPartMatchesSize(oldp, partSize) then
+							table.insert(newList, oldp)
+							used[oldp] = true
+							if #newList >= maxParts then break end
+						end
 					end
 				end
-			end
-			for _, p in ipairs(found) do
-				if #newList >= maxParts then break end
-				if not used[p] then
-					table.insert(newList, p)
-					used[p] = true
+				local found
+				if UnanchoredReanimator.CanMode then
+					found = unanchoredCollectCansFromSource(maxParts, used)
+				else
+					found = collectUnanchoredParts(center, range, maxParts, exclude, partSize)
 				end
+				for _, p in ipairs(found or {}) do
+					if #newList >= maxParts then break end
+					if p and p.Parent and not p.Anchored and not used[p] then
+						table.insert(newList, p)
+						used[p] = true
+					end
+				end
+				UnanchoredReanimator.Parts = newList
 			end
-			UnanchoredReanimator.Parts = newList
 		end
 
 		-- Extras: validate every frame, auto-grab only on scan interval (cheap)
@@ -9201,6 +9247,7 @@ function UnanchoredReanimator.Start()
 						_lostOwnSince[part] = nil
 						_ownVerdict[part] = nil
 						_ownVerdictAt[part] = nil
+						lastScan = 0 -- claim a replacement next frames
 					end
 				end
 			else
@@ -9271,12 +9318,24 @@ function UnanchoredReanimator.Start()
 				unanchoredParkRealRootBelowRig()
 			end
 		else
+			-- Claim every tracked body part (owned + unowned) every frame
 			local claimList = {}
-			for _, p in ipairs(keep) do
-				table.insert(claimList, p)
+			for _, p in ipairs(UnanchoredReanimator.Parts) do
+				if p and p.Parent and not p.Anchored then
+					table.insert(claimList, p)
+				end
 			end
-			-- include every enabled extra part + its assembly mates (multi-part sword)
+			for _, p in ipairs(keep) do
+				local already = false
+				for _, q in ipairs(claimList) do
+					if q == p then already = true break end
+				end
+				if not already and p and p.Parent and not p.Anchored then
+					table.insert(claimList, p)
+				end
+			end
 			for _, extra in pairs(UnanchoredReanimator.Extras or {}) do
+				if not extra.Enabled then continue end
 				local mates = extra._assembly
 				if (not mates or #mates == 0) and extra.Part then
 					mates = unanchoredCollectAssemblyParts(extra.Part)
@@ -12191,4 +12250,3 @@ local d = function()
 		end
 	end end
 end d()
-
