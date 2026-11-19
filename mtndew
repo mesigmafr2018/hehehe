@@ -117,7 +117,6 @@
 
 
 
-
 local realsethiddenproperty = sethiddenproperty
 sethiddenproperty = newcclosure(function(obj, prop, val)
     if prop == "PhysicsRepRootPart" then
@@ -131,7 +130,7 @@ _G.UhhhhhhLoaded = true
 
 local UhhhhhhVersion = "1.0.9 BETA"
 
-ENABLE_MOUNTAINDEW_REANIMATOR = true --67
+ENABLE_MOUNTAINDEW_REANIMATOR = true
 
 local Debris = cloneref(game:GetService("Debris"))
 local CoreGui = cloneref(game:GetService("CoreGui"))
@@ -278,10 +277,6 @@ do
 		diefatal("T-this one shouldn't happen!")
 	end
 end
-
-ENABLE_LIMB_REANIMATOR = false
-ENABLE_HAT_REANIMATOR = false
-ENABLE_UNANCHORED_REANIMATOR = false
 
 local pcall = function(func, ...)
 	return pcall(function(...)
@@ -4563,41 +4558,13 @@ end
 
 SaveData.Reanimator = SaveData.Reanimator or {}
 
-LimbReanimator = {
-	Name = "Limbs",
-	Running = false,
-	FlingTargets = {},
-	_TempNotFling = {},
-	Mode = 2,
-	ShowHitboxes = function() end,
-	Fling = function() return false end,
-	Config = function() end,
-	Start = function()
-		Util.UINotify("Limb mode removed — Mountain Dew only")
-		Reanimate.Starting = false
-		Reanimate.Stopping = false
-	end,
-}
+LimbReanimator = nil
 
 HatReanimator = {
 	Name = "Hats",
-	Running = false,
-	FlingTargets = {},
-	_TempNotFling = {},
 	HatCFrameOverride = {},
 	HatMapSummary = "",
 	RebuildRequired = false,
-	FlingEnabled = false,
-	FlingMethod = 1,
-	ToolHolding = false,
-	ShowHitboxes = function() end,
-	Fling = function() return false end,
-	Config = function() end,
-	Start = function()
-		Util.UINotify("Hat mode removed — Mountain Dew only")
-		Reanimate.Starting = false
-		Reanimate.Stopping = false
-	end,
 	GetAttachmentCFrame = function(name)
 		local rc = Reanimate.Character
 		if not rc then return nil end
@@ -5848,55 +5815,61 @@ local function unanchoredDriveExtra(extra, reanimChar)
 	end
 end
 
+local function unanchoredIsMountainDewFolderPart(part)
+	if not (part and part.Parent) then return false end
+	local folder = workspace:FindFirstChild("AllMountainDew")
+	if not folder then return false end
+	return part:IsDescendantOf(folder)
+end
+
+local function unanchoredPartMatchesCanSize(part)
+	if not (part and part:IsA("BasePart")) then return false end
+	local tol = 0.15
+	local s = part.Size
+	local cs = UnanchoredReanimator.CanSize or Vector3.new(1, 1.8, 1)
+	local dims = {s.X, s.Y, s.Z}
+	table.sort(dims)
+	local wantDims = {cs.X, cs.Y, cs.Z}
+	table.sort(wantDims)
+	return math.abs(dims[1] - wantDims[1]) <= tol
+		and math.abs(dims[2] - wantDims[2]) <= tol
+		and math.abs(dims[3] - wantDims[3]) <= tol
+end
+
 local function unanchoredPartMatchesSize(part, want)
 	if not (part and part:IsA("BasePart")) then return false end
-	local tol = 0.25
-	local s = part.Size
-	
 	if UnanchoredReanimator.CanMode then
-		local cs = UnanchoredReanimator.CanSize or Vector3.new(1, 1.8, 1)
-		local dims = {s.X, s.Y, s.Z}
-		table.sort(dims)
-		local wantDims = {cs.X, cs.Y, cs.Z}
-		table.sort(wantDims)
-		local sizeOk = math.abs(dims[1] - wantDims[1]) <= tol
-			and math.abs(dims[2] - wantDims[2]) <= tol
-			and math.abs(dims[3] - wantDims[3]) <= tol
-		if sizeOk then return true end
-		
-		local n = string.lower(part.Name or "")
-		if n:find("mountain", 1, true) or n:find("dew", 1, true) or n == "can" then
-			return true
-		end
-		return false
+		-- cans: must be under AllMountainDew AND size ~1x1.8x1
+		return unanchoredIsMountainDewFolderPart(part) and unanchoredPartMatchesCanSize(part)
 	end
+	local tol = 0.12
+	local s = part.Size
 	want = tonumber(want) or 1
-	if want <= 0 then return true end 
+	if want <= 0 then return true end
 	return math.abs(s.X - want) <= tol
 		and math.abs(s.Y - want) <= tol
 		and math.abs(s.Z - want) <= tol
 end
 
 local function unanchoredIsCanPart(part)
-	if not (part and part:IsA("BasePart")) then return false end
-	
-	local prev = UnanchoredReanimator.CanMode
-	UnanchoredReanimator.CanMode = true
-	local ok = unanchoredPartMatchesSize(part, nil)
-	UnanchoredReanimator.CanMode = prev
-	return ok
+	if not (part and part:IsA("BasePart") and not part.Anchored) then return false end
+	return unanchoredIsMountainDewFolderPart(part) and unanchoredPartMatchesCanSize(part)
 end
 
+-- Only workspace.AllMountainDew (size-checked cans)
 local function unanchoredCollectCansFromSource(maxCount, excludeSet)
 	local result = {}
 	excludeSet = excludeSet or {}
+	local folder = workspace:FindFirstChild("AllMountainDew")
+	if not folder then return result end
+
 	local function consider(p)
 		if #result >= maxCount then return end
 		if not (p and p:IsA("BasePart") and p.Parent) then return end
 		if p.Anchored then return end
 		if excludeSet[p] then return end
 		if unanchoredIsSwordPart(p) or unanchoredIsAssignedExtraPart(p) then return end
-		if not unanchoredIsCanPart(p) then return end
+		if not unanchoredPartMatchesCanSize(p) then return end
 		local model = p:FindFirstAncestorOfClass("Model")
 		if model and Players:GetPlayerFromCharacter(model) then return end
 		local massOk = true
@@ -5907,27 +5880,11 @@ local function unanchoredCollectCansFromSource(maxCount, excludeSet)
 		excludeSet[p] = true
 		table.insert(result, p)
 	end
-	local function scanInst(inst)
-		if not inst then return end
-		if inst:IsA("BasePart") then consider(inst) end
-		for _, d in ipairs(inst:GetDescendants()) do
-			if #result >= maxCount then return end
-			consider(d)
-		end
-	end
-	local folder = workspace:FindFirstChild("AllMountainDew")
-	if folder then
-		scanInst(folder)
-		local dew = folder:FindFirstChild("MountainDew")
-		if dew then scanInst(dew) end
-	end
-	
-	if #result < maxCount then
-		for _, name in ipairs({"MountainDew", "Mountain Dew", "MTNDEW", "Cans"}) do
-			local alt = workspace:FindFirstChild(name)
-			if alt then scanInst(alt) end
-			if #result >= maxCount then break end
-		end
+
+	if folder:IsA("BasePart") then consider(folder) end
+	for _, d in ipairs(folder:GetDescendants()) do
+		if #result >= maxCount then break end
+		consider(d)
 	end
 	return result
 end
@@ -6288,196 +6245,6 @@ local function unanchoredProcessFling(ownedParts)
 end
 
 function UnanchoredReanimator.Config(parent)
-	UI.CreateText(parent, "Unanchored parts → 13 slots on reanim char.\nSpacing = Character Scale. Ownership-aware claim.", 11, Enum.TextXAlignment.Center)
-
-	local doff = UI.CreateSlider(parent, "Offset Y", UnanchoredReanimator.OffsetY, -10, 10, 0.5)
-	doff.Changed:Connect(function(val)
-		UnanchoredReanimator.OffsetY = val
-		SaveData.Reanimator.UnanchoredOffsetY = val
-	end)
-
-	local drange = UI.CreateSlider(parent, "Acquire Range (keep is infinite)", UnanchoredReanimator.Range or 80, 10, 1000, 5)
-	drange.Changed:Connect(function(val)
-		
-		val = tonumber(val) or UnanchoredReanimator.Range or 80
-		if val < 0 then val = 0 end
-		UnanchoredReanimator.Range = val
-		SaveData.Reanimator.UnanchoredRange = val
-	end)
-	UI.CreateText(parent, "Slider 10–1000. Type higher in the box if needed.", 10, Enum.TextXAlignment.Center)
-
-	
-	UnanchoredReanimator.MaxParts = 13
-	SaveData.Reanimator.UnanchoredMaxParts = 13
-
-	UI.CreateSwitch(parent, "Root Below Rig", UnanchoredReanimator.RootBelowRig).Changed:Connect(function(val)
-		UnanchoredReanimator.RootBelowRig = val
-		SaveData.Reanimator.UnanchoredRootBelowRig = val
-	end)
-	local dbelow = UI.CreateSlider(parent, "Root Below Offset", UnanchoredReanimator.RootBelowOffset or 10, 1, 100, 1)
-	dbelow.Changed:Connect(function(val)
-		val = math.max(1, tonumber(val) or 10)
-		UnanchoredReanimator.RootBelowOffset = val
-		SaveData.Reanimator.UnanchoredRootBelowOffset = val
-	end)
-	UI.CreateText(parent, "Studs under reanim HRP when Root Below Rig is on.", 10, Enum.TextXAlignment.Center)
-
-	local dsize = UI.CreateSlider(parent, "Part Size (NxNxN)", UnanchoredReanimator.PartSize, 0, 10, 0.5)
-	dsize.Changed:Connect(function(val)
-		UnanchoredReanimator.PartSize = val
-		SaveData.Reanimator.UnanchoredPartSize = val
-	end)
-	UI.CreateText(parent, "Part Size 0 = any size. 1 = only 1x1x1, etc. (ignored in Can Mode)", 10, Enum.TextXAlignment.Center)
-
-	UI.CreateSeparator(parent)
-	UI.CreateText(parent, "Extras (Sword / Gun / Fire)", 14, Enum.TextXAlignment.Center)
-	UI.CreateText(parent, "Auto-detect by name, or Pick a world part./nOffset/Rotation fix grip alignment (degrees).", 10, Enum.TextXAlignment.Center)
-
-	local function saveExtra(extra)
-		unanchoredSaveExtras()
-	end
-
-	local function extraStatus(extra)
-		if not extra.Enabled then return "(off)" end
-		if extra.Part and extra.Part.Parent then
-			return extra.Part.Name
-		end
-		return extra.Auto and "(auto…)" or "(none – click Pick)"
-	end
-
-	for _, key in ipairs({"Sword", "Gun", "Fire"}) do
-		local extra = UnanchoredReanimator.Extras[key]
-		if not extra then continue end
-
-		UI.CreateSeparator(parent)
-		UI.CreateText(parent, "<b>" .. key .. "</b>  ·  attach: " .. (extra.Attach or "?"), 13, Enum.TextXAlignment.Left)
-
-		UI.CreateSwitch(parent, key .. " Enabled", extra.Enabled).Changed:Connect(function(val)
-			extra.Enabled = val
-			if not val then extra.Part = nil end
-			saveExtra(extra)
-		end)
-		UI.CreateSwitch(parent, key .. " Auto-detect by name", extra.Auto).Changed:Connect(function(val)
-			extra.Auto = val
-			saveExtra(extra)
-		end)
-
-		local statusLbl = UI.CreateText(parent, key .. " part: " .. extraStatus(extra), 11, Enum.TextXAlignment.Left)
-		task.spawn(function()
-			while statusLbl and statusLbl.Parent do
-				statusLbl.Text = key .. " part: " .. extraStatus(extra)
-				task.wait(0.4)
-			end
-		end)
-
-		local pickBtn = UI.CreateButton(parent, "Pick " .. key .. " part (click in world)", 14)
-		pickBtn.Activated:Connect(function()
-			if UnanchoredReanimator._pickingExtra == key then
-				UnanchoredReanimator._pickingExtra = nil
-				Util.UINotify("Pick cancelled")
-				return
-			end
-			UnanchoredReanimator._pickingExtra = key
-			Util.UINotify("Click an unanchored part for " .. key)
-			
-			if UnanchoredReanimator._extraPickConn then
-				pcall(function() UnanchoredReanimator._extraPickConn:Disconnect() end)
-				UnanchoredReanimator._extraPickConn = nil
-			end
-			UnanchoredReanimator._extraPickConn = UserInputService.InputBegan:Connect(function(input, gpe)
-				if gpe then return end
-				if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
-				if UnanchoredReanimator._pickingExtra ~= key then return end
-				local mouse = Player:GetMouse()
-				local target = mouse and mouse.Target
-				if target and target:IsA("BasePart") and not target.Anchored then
-					local model = target:FindFirstAncestorOfClass("Model")
-					if model and Players:GetPlayerFromCharacter(model) then
-						Util.UINotify("Can't use player character parts")
-					else
-						
-						for _, other in pairs(UnanchoredReanimator.Extras) do
-							if other.Part == target then other.Part = nil end
-						end
-						extra.Part = target
-						extra.Auto = false 
-						saveExtra(extra)
-						Util.UINotify(key .. " → " .. target.Name)
-						UnanchoredReanimator._pickingExtra = nil
-						if UnanchoredReanimator._extraPickConn then
-							pcall(function() UnanchoredReanimator._extraPickConn:Disconnect() end)
-							UnanchoredReanimator._extraPickConn = nil
-						end
-					end
-				else
-					Util.UINotify("Click an unanchored BasePart")
-				end
-			end)
-		end)
-
-		local clearBtn = UI.CreateButton(parent, "Clear " .. key .. " part", 12)
-		clearBtn.Activated:Connect(function()
-			extra.Part = nil
-			saveExtra(extra)
-			Util.UINotify(key .. " cleared")
-		end)
-
-		local attachOpts = {"RightArm", "LeftArm", "Torso", "Head"}
-		local attachIdx = 1
-		for i, a in ipairs(attachOpts) do
-			if a == extra.Attach then attachIdx = i break end
-		end
-		UI.CreateDropdown(parent, key .. " Attach", attachOpts, attachIdx).Changed:Connect(function(val)
-			extra.Attach = attachOpts[val] or "RightArm"
-			saveExtra(extra)
-		end)
-
-		UI.CreateSlider(parent, key .. " Offset X", extra.OffX, -10, 10, 0.05).Changed:Connect(function(val)
-			extra.OffX = val; saveExtra(extra)
-		end)
-		UI.CreateSlider(parent, key .. " Offset Y", extra.OffY, -10, 10, 0.05).Changed:Connect(function(val)
-			extra.OffY = val; saveExtra(extra)
-		end)
-		UI.CreateSlider(parent, key .. " Offset Z", extra.OffZ, -10, 10, 0.05).Changed:Connect(function(val)
-			extra.OffZ = val; saveExtra(extra)
-		end)
-		UI.CreateSlider(parent, key .. " Rot X (deg)", extra.RotX, -180, 180, 1).Changed:Connect(function(val)
-			extra.RotX = val; saveExtra(extra)
-		end)
-		UI.CreateSlider(parent, key .. " Rot Y (deg)", extra.RotY, -180, 180, 1).Changed:Connect(function(val)
-			extra.RotY = val; saveExtra(extra)
-		end)
-		UI.CreateSlider(parent, key .. " Rot Z (deg)", extra.RotZ, -180, 180, 1).Changed:Connect(function(val)
-			extra.RotZ = val; saveExtra(extra)
-		end)
-	end
-
-	UI.CreateSeparator(parent)
-	UI.CreateText(parent, "Fling", 14, Enum.TextXAlignment.Center)
-	UI.CreateSwitch(parent, "Target Fling Enabled", UnanchoredReanimator.FlingEnabled).Changed:Connect(function(val)
-		UnanchoredReanimator.FlingEnabled = val
-		SaveData.Reanimator.UnanchoredFlingEnabled = val
-	end)
-	local dfling = UI.CreateDropdown(parent, "Fling Method", {
-		"Catalyst Parts (unanchored parts into target)",
-		"Limb RootPart (PhysicsRepRootRef)",
-	}, (UnanchoredReanimator.FlingMethod or 0) + 1)
-	dfling.Changed:Connect(function(val)
-		UnanchoredReanimator.FlingMethod = val - 1
-		SaveData.Reanimator.UnanchoredFlingMethod = UnanchoredReanimator.FlingMethod
-	end)
-	local dpow = UI.CreateSlider(parent, "Catalyst Fling Power", UnanchoredReanimator.FlingPower, 50, 20000, 50)
-	dpow.Changed:Connect(function(val)
-		UnanchoredReanimator.FlingPower = val
-		SaveData.Reanimator.UnanchoredFlingPower = val
-	end)
-	UI.CreateText(parent, "Catalyst: owned unanchored parts slam target + velocity burst.\nLimb: real HRP CFrame/vel + PhysicsRepRootRef+InstanceHandle (Limb style).\nClick Fling / Fling API use UnanchoredReanimator.Fling.", 10, Enum.TextXAlignment.Center)
-
-	UI.CreateSwitch(parent, "Stay Invisible", UnanchoredReanimator.StayInvisible).Changed:Connect(function(val)
-		UnanchoredReanimator.StayInvisible = val
-		SaveData.Reanimator.UnanchoredStayInvisible = val
-	end)
-	UI.CreateText(parent, "Invisible: Catalyst kill + desync real char (NaN Motor6Ds),\ncamera follows reanim char, PhysicsRepRoot claim on parts.", 10, Enum.TextXAlignment.Center)
 end
 
 function UnanchoredReanimator.Start()
@@ -6556,8 +6323,8 @@ function UnanchoredReanimator.Start()
 
 	local conn
 	conn = RunService.Heartbeat:Connect(function(dt)
-		local unanchoredFamily = (Reanimate.Current == UnanchoredReanimator)
-			or (Reanimate.Current == MountainDewReanimator)
+		local unanchoredFamily = (Reanimate.Current == MountainDewReanimator)
+			or (Reanimate.Current == UnanchoredReanimator)
 		if Reanimate.Stopping or not UnanchoredReanimator.Running or not unanchoredFamily then
 			if conn then conn:Disconnect() end
 			if simConn then pcall(function() simConn:Disconnect() end) end
@@ -6629,18 +6396,8 @@ function UnanchoredReanimator.Start()
 			local partSize = UnanchoredReanimator.PartSize or 1
 			local found
 			if UnanchoredReanimator.CanMode then
-				local usedTmp = {}
-				found = unanchoredCollectCansFromSource(maxParts, usedTmp)
-				if #found < maxParts then
-					local more = collectUnanchoredParts(center, range, maxParts, exclude, partSize)
-					for _, p in ipairs(more) do
-						if #found >= maxParts then break end
-						if not usedTmp[p] and unanchoredIsCanPart(p) then
-							usedTmp[p] = true
-							table.insert(found, p)
-						end
-					end
-				end
+				-- Folder only (AllMountainDew) + can size — no world radius grab
+				found = unanchoredCollectCansFromSource(maxParts, {})
 			else
 				found = collectUnanchoredParts(center, range, maxParts, exclude, partSize)
 			end
@@ -7046,38 +6803,16 @@ end
 
 do
 	
-	local enabledReanimators = {
-		{ name = "Mountain Dew Reanimator", obj = MountainDewReanimator, title = "-=+ Mountain Dew Reanimator Config +=-" },
-	}
-
-	local names = {}
-	for i, e in ipairs(enabledReanimators) do names[i] = e.name end
-
-	SaveData.SelectedReanimator = math.clamp(tonumber(SaveData.SelectedReanimator) or 1, 1, #enabledReanimators)
-	local SelectedReanimator = enabledReanimators[SaveData.SelectedReanimator].obj
-
-	
-	if #enabledReanimators > 1 then
-		local ReanimateMethodSelect = UI.CreateDropdown(MainPage, "Reanimator", names, SaveData.SelectedReanimator)
-		local ReanimatorConfigTitle = UI.CreateText(MainPage, enabledReanimators[SaveData.SelectedReanimator].title, 15, Enum.TextXAlignment.Center)
-		local ReanimatorConfigCanvas = UI.CreateCanvas(MainPage)
-		ReanimateMethodSelect.Changed:Connect(function(value)
-			value = math.clamp(tonumber(value) or 1, 1, #enabledReanimators)
-			SaveData.SelectedReanimator = value
-			local entry = enabledReanimators[value]
-			SelectedReanimator = entry.obj
-			ReanimatorConfigTitle.Text = entry.title
-			Util.ClearAllChildrenGui(ReanimatorConfigCanvas)
-			SelectedReanimator.Config(ReanimatorConfigCanvas)
-		end)
-		SelectedReanimator.Config(ReanimatorConfigCanvas)
-	else
+	SaveData.SelectedReanimator = 1
+	local SelectedReanimator = MountainDewReanimator
+	local ReanimatorConfigTitle = UI.CreateText(MainPage, "-=+ Mountain Dew Reanimator Config +=-", 15, Enum.TextXAlignment.Center)
+	local ReanimatorConfigCanvas = UI.CreateCanvas(MainPage)
+	SelectedReanimator.Config(ReanimatorConfigCanvas)
 		SaveData.SelectedReanimator = 1
 		SelectedReanimator = enabledReanimators[1].obj
 		local ReanimatorConfigTitle = UI.CreateText(MainPage, enabledReanimators[1].title, 15, Enum.TextXAlignment.Center)
 		local ReanimatorConfigCanvas = UI.CreateCanvas(MainPage)
 		SelectedReanimator.Config(ReanimatorConfigCanvas)
-	end
 	UI.CreateText(MainPage, " ", 5, Enum.TextXAlignment.Center)
 	local ReanimateText = UI.CreateText(MainPage, "Running: NONE", 15, Enum.TextXAlignment.Center)
 	local ReanimateStartButton, ReanimateStartButtonText = UI.CreateButton(MainPage, "* Reanimate *", 20)
